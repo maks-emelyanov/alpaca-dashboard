@@ -1,0 +1,151 @@
+:root { color-scheme: dark; --bg: #101713; --surface: #151e18; --line: #2a352d; --text: #edf4ef; --muted: #8c9c91; --green: #35d498; --red: #ff777d; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; -webkit-font-smoothing: antialiased; }
+button, input { font: inherit; }
+button, input[type="radio"], input[type="checkbox"], label { cursor: pointer; }
+button:focus-visible, input:focus-visible, label:has(input:focus-visible) { outline: 2px solid var(--green); outline-offset: 4px; }
+.dashboard-shell { width: min(1440px, 100%); margin: 0 auto; padding: 28px 48px 24px; }
+.page-header { display: flex; align-items: center; justify-content: space-between; padding: 0 0 27px; border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand-mark { width: 39px; height: 39px; display: grid; place-items: center; background: var(--green); color: #10271b; font-size: 28px; font-weight: 800; border-radius: 11px 11px 11px 3px; }
+.brand-name { font-size: 21px; font-weight: 650; letter-spacing: -.8px; line-height: 1; }
+.brand-subtitle { margin-top: 6px; color: var(--muted); font-size: 11px; letter-spacing: .35px; }
+.header-meta { display: flex; gap: 22px; align-items: center; }
+.paper-badge { font-size: 10px; letter-spacing: 1.3px; border: 1px solid #375240; color: #b6c6ba; background: #1c2a20; padding: 7px 10px; border-radius: 6px; font-weight: 600; }
+.market-status { font-size: 12px; color: var(--muted); }
+.market-status::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 8px; background: #87a58e; border-radius: 50%; }
+.status-banner { margin-top: 20px; padding: 12px 16px; font-size: 12px; line-height: 1.6; border: 1px solid #635638; background: #29271a; color: #dbc995; border-radius: 8px; }
+.performance-card { padding: 37px 0 24px; }
+.performance-summary { display: flex; justify-content: space-between; align-items: flex-start; }
+.eyebrow { color: var(--muted); font-size: 10px; letter-spacing: 1.8px; font-weight: 650; margin-bottom: 12px; }
+.account-value { font-size: clamp(38px, 4vw, 56px); letter-spacing: -2.6px; line-height: 1.08; font-weight: 450; margin: 0 0 10px; font-variant-numeric: tabular-nums; }
+.pnl-caption { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; min-height: 20px; font-size: 13px; }
+.pnl-change { display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; }
+.period-label { color: var(--muted); font-weight: 400; }
+.account-metrics { display: flex; padding-top: 15px; gap: 50px; }
+.account-metrics > div { display: flex; flex-direction: column; gap: 9px; }
+.metric-label { font-size: 12px; color: var(--muted); }
+.metric-value { font-size: 22px; letter-spacing: -.55px; font-weight: 450; font-variant-numeric: tabular-nums; }
+.performance-chart { margin: 12px -8px 2px; height: 345px; min-width: 0; }
+.timeframes { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.timeframe-label { display: inline-flex !important; position: relative; color: #9bac9f; font-size: 12px; font-weight: 600; padding: 9px 13px; border-radius: 6px; user-select: none; transition: color .15s, background .15s; }
+.timeframe-label:hover { color: var(--text); background: #1d2b21; }
+.timeframe-label:has(input:checked) { color: var(--green); background: #203b2c; }
+.timeframe-input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.custom-dates { margin: 14px 0 3px; }
+.field-error { font-size: 12px; color: #f6bd83; margin: 7px 0 0; }
+.field-error:empty { margin: 0; }
+.chart-footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 21px; color: #738579; font-size: 11px; }
+.performance-warning { color: #dbc995; font-size: 12px; margin-top: 12px; line-height: 1.6; }
+.performance-note { color: var(--muted); font-size: 12px; margin-top: 12px; line-height: 1.6; }
+.performance-note:empty, .performance-warning:empty { display: none; }
+.chart-note { color: var(--muted); font-size: 11px; }
+.activity-card { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 29px; }
+.activity-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 25px; gap: 15px; }
+h2 { font-size: 21px; font-weight: 550; letter-spacing: -.55px; margin: 0 0 7px; }
+.activity-heading p { margin: 0; color: var(--muted); font-size: 12px; }
+.link-ranges { color: #a6b8aa; font-size: 12px; white-space: nowrap; }
+.link-ranges input { margin: 0 8px 0 0; accent-color: var(--green); vertical-align: -2px; }
+.activity-tabs { border-bottom: 1px solid var(--line); }
+.activity-tab { background: transparent !important; border: 0 !important; color: var(--muted) !important; font-size: 13px !important; padding: 0 3px 15px !important; margin-right: 28px !important; flex: none !important; }
+.activity-tab-selected { color: var(--text) !important; border-bottom: 2px solid var(--green) !important; font-weight: 550; }
+.table-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-top: 20px; }
+.table-toolbar .timeframes { gap: 2px; }
+.table-toolbar .timeframe-label { padding: 8px 10px; font-size: 11px; }
+.table-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-left: auto; }
+.table-search { color: var(--text); background: #17221b; width: 195px; border: 1px solid #334338; height: 33px; border-radius: 6px; padding: 0 11px; font-size: 12px; }
+.table-search::placeholder { color: #7e9384; }
+.export-button { color: #c4d3c8; background: transparent; border: 1px solid #334338; border-radius: 6px; height: 33px; padding: 0 12px; font-size: 11px; white-space: nowrap; }
+.export-button:hover { border-color: #638570; background: #1c2b21; }
+.table-note { font-size: 11px; color: #819888; margin: 15px 0 14px; line-height: 1.6; }
+.account-grid { width: 100%; --ag-background-color: #121b15; --ag-header-background-color: #1b261e; --ag-odd-row-background-color: #151f18; --ag-border-color: #2b3a2e; --ag-row-border-color: #243027; --ag-foreground-color: #d4e0d7; --ag-secondary-foreground-color: #8da493; --ag-header-foreground-color: #90a798; --ag-font-family: Inter, ui-sans-serif, system-ui, sans-serif; --ag-font-size: 12px; --ag-header-height: 42px; --ag-row-height: 44px; --ag-selected-row-background-color: #253f2e; --ag-range-selection-border-color: var(--green); --ag-accent-color: var(--green); --ag-wrapper-border-radius: 8px; --ag-input-focus-border-color: #35d498; }
+.account-grid .ag-header-cell-text { font-size: 11px; font-weight: 500; }
+.account-grid .ag-cell { font-variant-numeric: tabular-nums; }
+/* Keep the pinned-column spacer without its redundant native scrollbar. */
+.account-grid .ag-horizontal-left-spacer { overflow-x: hidden; }
+/* Fit populated pages to their rows; keep room for the empty-state message. */
+.account-grid:has(.ag-center-cols-container > .ag-row) .ag-layout-auto-height .ag-center-cols-viewport { min-height: 0; }
+.account-grid:not(:has(.ag-center-cols-container > .ag-row)) .ag-body-horizontal-scroll { display: none; }
+/* Overlay scrollbars also occupy their own row below the data. */
+.account-grid .ag-body-horizontal-scroll.ag-scrollbar-invisible { position: relative; }
+.symbol-cell { font-weight: 650; color: var(--text); }
+.positive-value { color: var(--green) !important; }
+.negative-value { color: var(--red) !important; }
+.empty-grid { color: #8da493; font-size: 13px; padding: 15px; }
+.trade-details { margin-top: 16px; padding: 20px; border: 1px solid var(--line); background: #16201a; border-radius: 8px; }
+.details-heading { display: flex; justify-content: space-between; align-items: center; }
+.details-heading h3 { font-size: 14px; margin: 0; }
+.trade-details pre { font-size: 12px; line-height: 1.6; color: #a9bdb0; max-height: 330px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.page-footer { display: flex; justify-content: space-between; color: #6d8374; font-size: 10px; line-height: 1.6; gap: 18px; padding-top: 24px; }
+/* Dash 4 inherits these tokens into the calendar and its month/year controls. */
+.custom-dates {
+    --Dash-Fill-Inverse-Strong: #17221b;
+    --Dash-Fill-Interactive-Strong: var(--green);
+    --Dash-Fill-Interactive-Weak: #254532;
+    --Dash-Fill-Disabled: #1b271f;
+    --Dash-Text-Strong: var(--text);
+    --Dash-Text-Weak: var(--muted);
+    --Dash-Text-Disabled: #617369;
+    --Dash-Stroke-Strong: #334338;
+    --Dash-Shading-Strong: rgba(0, 0, 0, .4);
+    --Dash-Shading-Weak: rgba(0, 0, 0, .2);
+    --Dash-Spacing: 4px;
+    color: var(--text);
+    font-size: 12px;
+}
+.custom-dates .dash-datepicker {
+    width: 340px;
+    max-width: 100%;
+    border-radius: 8px;
+    transition: border-color .15s, box-shadow .15s;
+}
+.custom-dates .dash-datepicker:focus-within {
+    border-color: var(--green);
+    box-shadow: 0 0 0 3px rgba(53, 212, 152, .1);
+    outline: none;
+}
+.custom-dates .dash-datepicker-input-wrapper {
+    min-height: 40px;
+    padding: 9px 12px;
+    gap: 8px;
+}
+.custom-dates .dash-datepicker-input-wrapper > div { min-width: 0; }
+.custom-dates .dash-datepicker-input {
+    max-width: 100%;
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    caret-color: var(--green);
+    cursor: text;
+}
+.custom-dates .dash-datepicker-input::placeholder { color: var(--muted); opacity: 1; }
+.custom-dates .dash-datepicker-content {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, .4);
+    font: inherit;
+}
+.custom-dates .dash-datepicker-controls { padding-bottom: 10px; }
+.custom-dates .dash-datepicker-month-nav { border-radius: 5px; }
+.custom-dates .dash-datepicker-controls .dash-dropdown,
+.custom-dates .dash-datepicker-controls .dash-input { border-radius: 6px; font-size: 12px; }
+.custom-dates .dash-input-stepper { color: var(--muted); }
+.custom-dates .dash-input-stepper:hover { color: var(--green); }
+.custom-dates .dash-datepicker-calendar th { color: var(--muted); font-size: 11px; font-weight: 500; }
+.custom-dates .dash-datepicker-calendar td { font-size: 12px; font-variant-numeric: tabular-nums; }
+.custom-dates .dash-datepicker-calendar-date-selected { font-weight: 650; }
+.custom-dates .dash-dropdown-content { border: 1px solid var(--line); border-radius: 8px; }
+@media (max-width: 1100px) { .dashboard-shell { padding: 24px 28px; } .table-toolbar { flex-direction: column; gap: 12px; } .table-actions { width: 100%; justify-content: flex-end; } .account-metrics { gap: 26px; } }
+@media (max-width: 650px) { .dashboard-shell { padding: 20px 16px; } .page-header { padding-bottom: 20px; } .header-meta { gap: 10px; flex-direction: column; align-items: flex-end; } .market-status { font-size: 10px; } .brand-name { font-size: 20px; } .performance-card { padding-top: 28px; } .performance-summary { flex-direction: column; gap: 23px; } .account-metrics { padding: 0; gap: 40px; } .metric-value { font-size: 19px; } .account-value { letter-spacing: -1.8px; font-size: 44px; } .performance-chart { margin-top: 0; } .timeframes { gap: 1px; } .timeframe-label { padding: 9px 10px; font-size: 11px; } .chart-footer { align-items: flex-start; flex-direction: column; gap: 7px; margin-top: 17px; } .activity-heading { align-items: flex-start; flex-direction: column; gap: 17px; } .table-toolbar { margin-top: 16px; } .table-toolbar .timeframe-label { padding: 8px 9px; } .table-actions { justify-content: space-between; } .table-search { flex: 1; width: 150px; } .page-footer { flex-direction: column; gap: 4px; } .period-label { font-size: 11px; } .ag-paging-row-summary-panel { display: none; } .details-heading { align-items: flex-start; gap: 8px; flex-direction: column; } }
+
+.fills-scroll { overflow-x: auto; margin: 18px 0; }
+.fills-table { border-collapse: collapse; width: 100%; text-align: left; font-size: 12px; white-space: nowrap; }
+.fills-table th { color: #8da493; font-size: 11px; font-weight: 500; }
+.fills-table th, .fills-table td { padding: 11px 15px 11px 0; border-bottom: 1px solid var(--line); }
+.trade-details summary { color: #9bb7a5; font-size: 12px; cursor: pointer; }
+
+.activity-tabs { flex-direction: row !important; }
+.link-ranges label { color: #a6b8aa; }
+
+.link-ranges .dash-options-list-option-text { color: #a6b8aa !important; }
+.timeframes label[aria-selected="true"] .timeframe-label { color: var(--green); background: #203b2c; }
