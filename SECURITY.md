@@ -10,9 +10,9 @@ The local `.env`, SQLite cache, browser-visible data, and CSV exports are sensit
 
 ## Reporting a vulnerability
 
-This repository is private. Authorized collaborators can open an issue to report a vulnerability, using synthetic data and sanitized examples. Include the affected commit or version, reproduction steps, and impact. If details require a more restricted audience, open a minimal issue requesting a private reporting channel first.
+Report potential vulnerabilities privately using [GitHub private vulnerability reporting](https://github.com/maks-emelyanov/alpaca-dashboard/security/advisories/new), also available through **Report a vulnerability** on the repository's **Security** tab. Include the affected commit or version, reproduction steps, and impact, using synthetic data and sanitized examples.
 
-If the repository becomes public, use **Report a vulnerability** on its GitHub **Security** tab when private vulnerability reporting is enabled. Otherwise request a private reporting channel without publishing exploit details. Keep credentials and account information out of all reports. Ordinary functional bugs can be reported using [CONTRIBUTING.md](CONTRIBUTING.md).
+Keep exploit details out of public issues, and keep credentials and account information out of all reports. Ordinary functional bugs can be reported using [CONTRIBUTING.md](CONTRIBUTING.md).
 
 When possible, check whether the issue also affects the current default branch. There is no separate security maintenance policy for older releases.
 
