@@ -279,10 +279,25 @@ def test_custom_validation_hover_empty_and_mobile(dashboard):
     assert checked_preset(page, "history") == "1D"
     # Incomplete custom dates leave the previously accepted chart in place.
     assert page.evaluate("document.querySelector('#pnl-chart .js-plotly-plot').data.length") == 1
-    page.locator("#chart-dates").fill("Jan 02, 2025")
-    page.locator("#chart-dates").press("Tab")
-    page.locator("#chart-dates-end-date").fill("Jan 03, 2025")
-    page.locator("#chart-dates-end-date").press("Tab")
+    start_date = page.locator("#chart-dates")
+    end_date = page.locator("#chart-dates-end-date")
+    start_date.fill("Jan 02, 2025")
+    # Tab commits the draft date through React effects and a Dash callback.
+    # Complete that roundtrip before entering the second field.
+    with page.expect_response(
+        lambda response: (
+            response.url.split("?", 1)[0].endswith("/_dash-update-component")
+            and "chart-dates.start_date"
+            in response.request.post_data_json.get("changedPropIds", [])
+        )
+    ) as start_update:
+        start_date.press("Tab")
+    assert start_update.value.ok
+    start_update.value.finished()
+    playwright.expect(start_date).to_have_value("Jan 2, 2025")
+    end_date.fill("Jan 03, 2025")
+    end_date.press("Tab")
+    playwright.expect(end_date).to_have_value("Jan 3, 2025")
     page.wait_for_function(
         "document.querySelector('#history-preset input:checked').value === 'CUSTOM'"
     )
