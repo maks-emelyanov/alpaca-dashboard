@@ -1,15 +1,55 @@
+# Python environments and caches
 .venv*/
+venv/
+env/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.pyright/
+.tox/
+.nox/
+.hypothesis/
+
+# Coverage and build artifacts
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 build/
 dist/
 *.egg-info/
+.eggs/
+
+# Local account data and exports
 data/
 *.sqlite*
+*.db
+*.db-*
+alpaca-*.csv
+*.log
+
+# Credentials; keep the safe setup template
 .env
 .env.*
 *.env
+!.env.example
+*.pem
+*.key
+.aws/
+
+# Local agent configuration, editors, and OS files
+.agents/
+.codex/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Browser test artifacts
+test-results/
+playwright-report/

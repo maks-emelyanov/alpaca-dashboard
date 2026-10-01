@@ -1,0 +1,47 @@
+name: Bug report
+description: Report a dashboard, accounting, installation, or performance problem.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check existing issues before submitting. Explain the problem with synthetic account data when possible.
+
+        Remove API keys, secrets, authentication headers, account identifiers, and trading records from examples, logs, and screenshots. Do not attach `.env` files, SQLite caches, or account CSV exports.
+
+        For vulnerabilities, follow the [security policy](https://github.com/maks-emelyanov/alpaca-dashboard/security/policy). Keep exploit details out of public issues.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened and what did you expect?
+      description: Describe the affected view or command and the difference between actual and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the command or UI steps. For data-related problems, add a small synthetic example or fake broker response.
+      placeholder: |
+        1. Start the dashboard with ...
+        2. Select the ... range or tab.
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Share any details you know. A commit hash helps when running from a checkout.
+      placeholder: |
+        Dashboard version or commit:
+        Python version:
+        Operating system:
+        Browser and version (for UI issues):
+        Installation method (uv, pip, editable checkout, or wheel):
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized output or screenshots
+      description: Optional error messages, screenshots, or a minimal test using synthetic data. Review every attachment for sensitive information before submitting.

@@ -4,6 +4,20 @@ version = "0.1.0"
 description = "Reusable, read-only Alpaca paper account dashboard"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["alpaca", "dashboard", "paper-trading", "plotly", "dash"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Office/Business :: Financial",
+]
 dependencies = [
     "dash>=4.4.1,<5",
     "dash-ag-grid>=35.3,<36",
@@ -11,11 +25,17 @@ dependencies = [
     "exchange-calendars>=4.12,<5",
 ]
 
+[project.urls]
+Repository = "https://github.com/maks-emelyanov/alpaca-dashboard"
+Documentation = "https://github.com/maks-emelyanov/alpaca-dashboard#readme"
+Issues = "https://github.com/maks-emelyanov/alpaca-dashboard/issues"
+Changelog = "https://github.com/maks-emelyanov/alpaca-dashboard/releases"
+
 [project.scripts]
 alpaca-dashboard = "alpaca_dashboard.cli:main"
 
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

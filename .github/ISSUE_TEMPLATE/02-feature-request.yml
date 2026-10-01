@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest an improvement to the dashboard or its developer experience.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check existing issues for similar requests. Describe examples with synthetic data and remove credentials, account identifiers, and trading records from any attachments.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the task you are trying to complete and who would benefit.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Explain how the dashboard or workflow should behave. Concrete examples are helpful; an implementation plan is optional.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and additional context
+      description: Optional workarounds, related issues, mockups, or tradeoffs to consider.

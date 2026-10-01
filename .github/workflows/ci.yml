@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python ${{ matrix.python }} tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.17"
+          python-version: ${{ matrix.python }}
+      - name: Install locked dependencies
+        run: uv sync --locked --group dev
+      - name: Run tests
+        run: uv run --no-sync pytest --ignore=tests/test_dashboard_browser.py
+
+  browser:
+    name: Chromium browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.17"
+          python-version: "3.12"
+      - name: Install locked dependencies and Chromium
+        run: |
+          uv sync --locked --all-groups
+          uv run --no-sync playwright install --with-deps chromium
+      - name: Run browser tests
+        run: |
+          uv run --no-sync pytest tests/test_dashboard_browser.py --junitxml="$RUNNER_TEMP/browser-results.xml"
+          uv run --no-sync python - <<'PY'
+          import os
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          report = Path(os.environ["RUNNER_TEMP"]) / "browser-results.xml"
+          cases = ElementTree.parse(report).findall(".//testcase")
+          assert cases, "No browser tests ran"
+          assert not any(case.find("skipped") is not None for case in cases), "Browser tests skipped"
+          PY
+
+  package:
+    name: Lint and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.17"
+          python-version: "3.12"
+      - name: Install locked dependencies
+        run: uv sync --locked --group dev
+      - name: Lint
+        run: |
+          uv run --no-sync ruff check .
+          uv run --no-sync ruff format --check .
+      - name: Build and inspect distributions
+        run: |
+          uv build
+          uv run --no-sync python .github/scripts/check_dist.py
+      - name: Install wheel in a clean environment
+        run: |
+          uv venv "$RUNNER_TEMP/package-smoke"
+          uv pip install --python "$RUNNER_TEMP/package-smoke/bin/python" dist/*.whl
+      - name: Check installed assets and CLI outside the checkout
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/package-smoke/bin/python" - <<'PY'
+          from importlib.resources import files
+
+          assets = files("alpaca_dashboard").joinpath("assets")
+          for name in ("dashboard.css", "dashboard.js"):
+              assert assets.joinpath(name).read_text(encoding="utf-8"), f"Missing asset: {name}"
+          PY
+          "$RUNNER_TEMP/package-smoke/bin/alpaca-dashboard" --help
+          "$RUNNER_TEMP/package-smoke/bin/python" -m alpaca_dashboard --help
