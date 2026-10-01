@@ -1,6 +1,6 @@
 # Contributing
 
-For setup and supported behavior, start with [README.md](README.md). Work from a branch in a local checkout, using Python 3.12 or newer and `uv`.
+For setup and supported behavior, start with [README.md](README.md). Fork the repository on GitHub, clone your fork, and work from a branch using Python 3.12 or newer and `uv`. Open pull requests against this repository's `main` branch.
 
 ## Development checks
 

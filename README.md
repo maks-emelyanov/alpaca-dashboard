@@ -21,8 +21,6 @@ uv run --frozen --no-dev alpaca-dashboard
 
 Open <http://127.0.0.1:8050>. Stop the dashboard with `Ctrl+C`. Initial history backfill can take longer for large accounts; account and position data appear while history loads.
 
-Repository access is required to clone this private repository. Authenticate Git with your GitHub account, or use `gh repo clone maks-emelyanov/alpaca-dashboard`.
-
 The local UI has no login and displays account data. Run it on a trusted machine, keep the server bound to loopback, and treat the cache and CSV exports as private. See [SECURITY.md](SECURITY.md) for the security scope.
 
 ## Use from another project
