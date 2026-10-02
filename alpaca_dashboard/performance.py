@@ -125,8 +125,8 @@ def _initial_funding(
     """Reconcile capital backdated into equity before account creation.
 
     Paper history can include the initial balance before the account exists,
-    then post the same funding in a later bucket. Confirm that capital against
-    both broker sources before excluding it once from subsequent cash flows.
+    with its funding in the baseline bucket or a later bucket. Confirm that
+    capital against both broker sources and exclude it exactly once from cash flows.
     Keep the funded baseline, including any profit earned before posting.
     """
     unavailable = "Initial funding baseline cannot be reconciled with portfolio history"
@@ -155,13 +155,17 @@ def _initial_funding(
     matches = [
         item["index"]
         for item in raw
-        if item["index"] > baseline_index
+        if item["index"] >= baseline_index
         and item["at"].astimezone(NEW_YORK).date() == creation_day
         and item["index"] < len(values)
         and number(values[item["index"]]) == baseline
     ]
     if len(matches) != 1:
         return None, ZERO, unavailable
+    if matches[0] == baseline_index:
+        # Performance already excludes cash flows in the baseline bucket.
+        # Applying the late-posting adjustment here would count the seed twice.
+        return None, ZERO, None
     return matches[0], baseline, None
 
 

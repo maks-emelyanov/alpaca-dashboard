@@ -264,6 +264,106 @@ def test_nonmonotonic_history_cannot_misalign_cashflow_buckets():
     assert "incomplete" in result["error"]
 
 
+def baseline_seed_history(*, live=False):
+    """A daily snapshot can already include funding before account creation."""
+    created = at("2026-06-11T02:27:00Z")
+    raw = {
+        "timestamp": [
+            at("2026-06-11T00:00:00Z").timestamp(),
+            at("2026-06-12T00:00:00Z").timestamp(),
+            at("2026-06-13T00:00:00Z").timestamp(),
+        ],
+        "equity": [10000, 10012, "10042.85"],
+        "base_value": 10000,
+        "base_value_asof": "2026-06-09",
+        "cashflow": {"JNLC": [10000, 0, 0]},
+    }
+    selected = Window(created, at("2026-06-14T00:00:00Z"), "1D", "ALL", live, "ALL")
+    account = {"created_at": created.isoformat(), "equity": "10047.85"}
+    seed = {
+        "id": "initial-paper-funding",
+        "activity_type": "JNLC",
+        "net_amount": "10000",
+        "date": "2026-06-10",
+    }
+    return raw, selected, account, seed
+
+
+@pytest.mark.parametrize("live", [False, True])
+@pytest.mark.parametrize("later_funding", [False, True])
+def test_seed_in_baseline_bucket_matches_broader_period(live, later_funding):
+    raw, selected, account, seed = baseline_seed_history(live=live)
+    activities = [seed]
+    if later_funding:
+        raw["cashflow"].update(CSD=[0, 500, 0], CSW=[0, 0, -100])
+        raw["equity"][1:] = [10512, "10442.85"]
+        account["equity"] = "10447.85"
+        activities.extend(
+            [
+                {
+                    "id": "later-deposit",
+                    "activity_type": "CSD",
+                    "net_amount": "500",
+                    "transaction_time": "2026-06-11T19:00:00Z",
+                },
+                {
+                    "id": "later-withdrawal",
+                    "activity_type": "CSW",
+                    "net_amount": "-100",
+                    "transaction_time": "2026-06-12T19:00:00Z",
+                },
+            ]
+        )
+    broader = Window(at("2026-01-01T05:00:00Z"), selected.end, "1D", "YTD", live, "YTD")
+    results = [
+        performance_series(
+            raw,
+            period,
+            account=account,
+            activities=activities,
+            as_of=at("2026-06-13T14:00:00Z"),
+        )
+        for period in (selected, broader)
+    ]
+    for result in results:
+        assert result["error"] is None
+        assert Decimal(result["points"][0]["pnl"]) == 12
+        assert Decimal(result["pnl"]) == Decimal("47.85" if live else "42.85")
+        assert Decimal(result["pnl_pct"]) == Decimal("0.4785" if live else "0.4285")
+        assert len(result["points"]) == (3 if live else 2)
+    assert results[0]["points"] == results[1]["points"]
+
+
+@pytest.mark.parametrize(
+    "missing", ["activity", "bucket", "matching_amount", "unique_activity", "unique_bucket"]
+)
+def test_seed_in_baseline_bucket_requires_unambiguous_confirmation(missing):
+    raw, selected, account, seed = baseline_seed_history()
+    activities = [seed]
+    if missing == "activity":
+        activities = []
+    elif missing == "bucket":
+        raw["cashflow"] = {}
+    elif missing == "matching_amount":
+        seed["net_amount"] = "5000"
+        raw["cashflow"]["JNLC"][0] = 5000
+    elif missing == "unique_activity":
+        activities.append({**seed, "id": "ambiguous-second-funding"})
+    else:
+        raw["timestamp"][1] = at("2026-06-11T03:00:00Z").timestamp()
+        raw["cashflow"]["JNLC"][1] = 10000
+    result = performance_series(
+        raw,
+        selected,
+        account=account,
+        activities=activities,
+        as_of=at("2026-06-13T14:00:00Z"),
+    )
+    assert result["pnl"] is None
+    assert result["pnl_pct"] is None
+    assert result["error"] == "Initial funding baseline cannot be reconciled with portfolio history"
+
+
 def late_seed_history(resolution, *, live=False, first_funded_equity=10000):
     """Paper equity can include its seed before the funding ledger books it."""
     created = at("2026-09-28T19:28:08Z")
