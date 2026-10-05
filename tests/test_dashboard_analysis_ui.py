@@ -1,0 +1,179 @@
+"""Strategy analysis integration with range state, trade reconstruction and Dash."""
+
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
+import pytest
+
+pytest.importorskip("dash")
+pytest.importorskip("dash_ag_grid")
+
+from dash import no_update  # noqa: E402
+from dash.development.base_component import Component  # noqa: E402
+
+from alpaca_dashboard import ui  # noqa: E402
+from alpaca_dashboard.models import Window  # noqa: E402
+
+
+def callback(app, output_id):
+    item = next(value for key, value in app.callback_map.items() if f"{output_id}." in key)
+    return item["callback"].__wrapped__
+
+
+def descendants(node):
+    if isinstance(node, (list, tuple)):
+        for child in node:
+            yield from descendants(child)
+    elif isinstance(node, Component):
+        yield node
+        yield from descendants(getattr(node, "children", None))
+
+
+def rendered_text(node):
+    if isinstance(node, (list, tuple)):
+        return " ".join(rendered_text(child) for child in node)
+    if isinstance(node, Component):
+        return rendered_text(getattr(node, "children", None))
+    return "" if node is None else str(node)
+
+
+def metric_text(content, metric):
+    card = next(node for node in descendants(content) if getattr(node, "id", "") == metric)
+    return rendered_text(card)
+
+
+def execution(symbol, side, price, when):
+    return {
+        "id": f"{symbol}-{side}",
+        "activity_type": "FILL",
+        "symbol": symbol,
+        "qty": "1",
+        "price": str(price),
+        "side": side,
+        "transaction_time": when,
+    }
+
+
+@pytest.mark.parametrize("tab", ["trades", "positions", "orders"])
+def test_analysis_does_not_fetch_history_while_another_tab_is_selected(tab):
+    requests = []
+    app = ui.create_app(
+        SimpleNamespace(refresh_seconds=5, history=lambda window: requests.append(window))
+    )
+    result = callback(app, "analysis-content")({}, ui.initial_ranges(), tab)
+    assert result is no_update
+    assert requests == []
+
+
+def test_analysis_uses_history_range_and_reconstructs_trades_before_filtering(monkeypatch):
+    window = Window(
+        datetime(2026, 9, 28, 4, tzinfo=UTC),
+        datetime(2026, 10, 1, 4, tzinfo=UTC),
+        "5Min",
+        "analysis-test",
+        False,
+        "CUSTOM",
+    )
+    requested_selections, requests = [], []
+
+    def selection(selection, snapshot):
+        requested_selections.append(selection)
+        return window
+
+    def history(request):
+        requests.append(request)
+        return {"data": None, "loading": True}
+
+    monkeypatch.setattr(ui, "selection_window", selection)
+    app = ui.create_app(SimpleNamespace(refresh_seconds=5, history=history))
+    ranges = {
+        "chart": {"preset": "1D", "start_date": None, "end_date": None},
+        "history": {
+            "preset": "CUSTOM",
+            "start_date": "2026-09-28",
+            "end_date": "2026-09-30",
+        },
+        "linked": False,
+    }
+    snapshot = {
+        "account": {"created_at": "2024-01-01T00:00:00Z"},
+        "positions": [],
+        "orders": [],
+        "history_complete": True,
+        "activities": [
+            # The winning entry predates the range but its exit is in range.
+            execution("AAPL", "buy", 100, "2026-09-25T15:00:00Z"),
+            execution("AAPL", "sell", 120, "2026-09-28T15:00:00Z"),
+            execution("MSFT", "buy", 100, "2026-09-29T14:00:00Z"),
+            execution("MSFT", "sell", 90, "2026-09-29T15:00:00Z"),
+            execution("NVDA", "buy", 100, "2026-09-24T14:00:00Z"),
+            execution("NVDA", "sell", 50, "2026-09-25T15:00:00Z"),
+            # An exit exactly at the exclusive end must not enter the sample.
+            execution("META", "buy", 100, "2026-09-30T14:00:00Z"),
+            execution("META", "sell", 200, "2026-10-01T04:00:00Z"),
+        ],
+    }
+
+    content = callback(app, "analysis-content")(snapshot, ranges, "analysis")
+
+    assert requested_selections == [ranges["history"]]
+    assert len(requests) == 1
+    assert requests[0].resolution == "1D"
+    assert requests[0].start < window.start  # Fetch a prior balance for daily returns.
+    assert requests[0].end == window.end
+    assert "50.00%" in metric_text(content, "analysis-win_rate")
+    assert "2.00" in metric_text(content, "analysis-profit_factor")
+    assert "$5.00" in metric_text(content, "analysis-expectancy")
+    assert "—" in metric_text(content, "analysis-sharpe")
+
+
+def test_analysis_missing_history_and_trades_explains_unavailable_values(monkeypatch):
+    window = Window(
+        datetime(2026, 9, 28, 4, tzinfo=UTC),
+        datetime(2026, 9, 29, 4, tzinfo=UTC),
+        "1Min",
+        "analysis-empty",
+        False,
+        "1D",
+    )
+    monkeypatch.setattr(ui, "selection_window", lambda *args: window)
+    service = SimpleNamespace(
+        refresh_seconds=5,
+        history=lambda _: {
+            "data": None,
+            "loading": True,
+            "error": "Portfolio history temporarily unavailable",
+        },
+    )
+    app = ui.create_app(service)
+    content = callback(app, "analysis-content")(
+        {"history_complete": True}, ui.initial_ranges(), "analysis"
+    )
+
+    for metric in ("win_rate", "sharpe", "cagr", "max_drawdown", "profit_factor", "expectancy"):
+        assert "—" in metric_text(content, f"analysis-{metric}")
+    text = rendered_text(content).lower()
+    assert "portfolio history temporarily unavailable" in text
+    assert "loading" in text
+    assert "account" in text
+    assert "completed" in text
+
+
+def test_analysis_tab_hides_table_controls_and_restores_them_when_leaving():
+    app = ui.create_app(SimpleNamespace(refresh_seconds=5))
+    entry = next(item for key, item in app.callback_map.items() if "analysis-panel.style" in key)
+    select_tab = entry["callback"].__wrapped__
+    outputs = [output.component_id for output in entry["output"]]
+
+    analysis = dict(zip(outputs, select_tab("analysis"), strict=True))
+    assert analysis["analysis-panel"] == {}
+    assert analysis["table-actions"] == {"display": "none"}
+    assert all(
+        analysis[f"{tab}-panel"] == {"display": "none"} for tab in ("trades", "positions", "orders")
+    )
+    assert "account-wide" in analysis["table-note"].lower()
+
+    trades = dict(zip(outputs, select_tab("trades"), strict=True))
+    assert trades["analysis-panel"] == {"display": "none"}
+    assert trades["table-actions"] == {}
+    assert trades["trades-panel"] == {}

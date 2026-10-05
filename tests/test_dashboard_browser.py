@@ -355,3 +355,75 @@ def test_pagination_stays_on_current_page_during_live_refresh(dashboard):
         page.evaluate("window.dash_ag_grid.getApi('trades-grid').paginationGetCurrentPage()") == 1
     )
     assert not errors
+
+
+@pytest.mark.parametrize(
+    "dashboard", [{"previous_session": True, "refresh_seconds": 3600}], indirect=True
+)
+def test_strategy_analysis_ranges_trade_sample_and_mobile_layout(dashboard):
+    page, service, errors = dashboard
+    playwright.expect(page.locator("#pnl-value")).to_have_text("+$1,250.00")
+    playwright.expect(page.locator("#analysis-panel")).to_be_hidden()
+    initial_history_calls = len(service.history_calls)
+    page.locator("#activity-tab").get_by_text("Orders", exact=True).click()
+    playwright.expect(page.locator("#orders-panel")).to_be_visible()
+    assert len(service.history_calls) == initial_history_calls
+
+    page.locator("#activity-tab").get_by_text("Strategy analysis", exact=True).click()
+    win_rate = page.locator("#analysis-win_rate .analysis-metric-value")
+    playwright.expect(page.locator("#analysis-panel")).to_be_visible()
+    playwright.expect(win_rate).to_have_text("—")
+    playwright.expect(page.locator("#analysis-win_rate .analysis-metric-reason")).to_be_visible()
+    playwright.expect(page.locator("#table-actions")).to_be_hidden()
+    playwright.expect(page.locator("#orders-panel")).to_be_hidden()
+    playwright.expect(page.locator("#table-note")).to_contain_text("Account-wide")
+    assert service.history_calls[-1].resolution == "1D"
+
+    # Linked controls use the chart's range for the completed trade sample.
+    select_preset(page, "chart", "1W")
+    playwright.expect(win_rate).to_have_text("100.00%")
+    playwright.expect(page.locator(".analysis-coverage")).to_contain_text("Completed trades: 1")
+    playwright.expect(page.locator("#analysis-expectancy .analysis-metric-value")).to_have_text(
+        "$50.00"
+    )
+    for metric in ("win_rate", "sharpe", "cagr", "max_drawdown", "profit_factor", "expectancy"):
+        definition = page.locator(f"#analysis-{metric} .analysis-metric-definition")
+        playwright.expect(definition).not_to_be_empty()
+
+    # Unlinked activity ranges affect analysis while preserving the chart range.
+    page.locator("#link-ranges input").uncheck()
+    playwright.expect(page.locator("#history-range-controls")).to_be_visible()
+    select_preset(page, "history", "1D")
+    playwright.expect(win_rate).to_have_text("—")
+    assert checked_preset(page, "chart") == "1W"
+    select_preset(page, "history", "1W")
+    playwright.expect(win_rate).to_have_text("100.00%")
+
+    page.set_viewport_size({"width": 390, "height": 844})
+    playwright.expect(win_rate).to_be_visible()
+    page.wait_for_function("document.documentElement.scrollWidth <= window.innerWidth + 1")
+    page.locator("#analysis-panel details summary").click()
+    playwright.expect(page.locator("#analysis-panel details")).to_contain_text("252 trading days")
+
+    page.locator("#activity-tab").get_by_text("Trade history", exact=True).click()
+    playwright.expect(page.locator("#analysis-panel")).to_be_hidden()
+    playwright.expect(page.locator("#table-actions")).to_be_visible()
+    playwright.expect(page.locator("#trades-grid")).to_contain_text("MSFT")
+    assert not errors
+
+
+def test_strategy_analysis_preserves_available_metrics_during_history_error(dashboard):
+    page, service, errors = dashboard
+    page.locator("#activity-tab").get_by_text("Strategy analysis", exact=True).click()
+    win_rate = page.locator("#analysis-win_rate .analysis-metric-value")
+    playwright.expect(win_rate).to_have_text("100.00%")
+    service.error = "Temporary portfolio history failure"
+    playwright.expect(page.locator("#analysis-notes")).to_contain_text(
+        "Temporary portfolio history failure", timeout=12000
+    )
+    playwright.expect(win_rate).to_have_text("100.00%")
+    service.error = None
+    playwright.expect(page.locator("#analysis-notes")).not_to_contain_text(
+        "Temporary portfolio history failure", timeout=12000
+    )
+    assert not errors

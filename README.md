@@ -79,8 +79,57 @@ The account-value headline and dollar/percentage P&L follow the hovered chart po
 - **Trade history:** completed position lifecycles reconstructed from fills, including partial fills, scaling, shorts, fractional shares, and reversals. The selected range filters exit times. Select a trade for execution details.
 - **Open now:** every current holding, using broker basis, quantities, prices, returns, and linked stop/target orders. Holdings remain visible regardless of the selected history range.
 - **Orders:** broker orders and bracket relationships, filtered by submission time.
+- **Strategy analysis:** win rate, Sharpe, CAGR, maximum drawdown, compounded return, Sortino,
+  annualized volatility, Calmar, profit factor, expectancy, payoff ratio, average win/loss,
+  gross trade P&L, trade count, and average holding time. Uses the activity timeframe, linked
+  to the chart by default. Metrics cover the whole account; strategies sharing an account
+  are combined because broker records have no strategy attribution.
 
 Tables support search, column filters, sorting, resizing, pagination, and CSV export. Data comes exclusively from the broker; no trading journal, strategy attribution, or project-specific metadata is used.
+
+### Strategy analysis
+
+Open **Your activity → Strategy analysis**. The selected chart timeframe also controls analysis
+while **Link timeframes** is checked. Uncheck it to choose a separate activity timeframe.
+Table search and column filters do not affect metrics. Daily history is requested when this
+tab is active; trade statistics can appear while equity history is still loading.
+
+The view shows sample sizes, available daily return dates, incomplete records excluded from the
+trade sample, and an explanation for each unavailable metric. Undated incomplete executions
+receive a separate note because they cannot be assigned to a selected period. Samples below
+30 completed trades or 30 daily returns are labeled as small. These labels are informational,
+not a profitability score or a statistical confidence guarantee.
+
+| Metric | Calculation and requirements |
+| --- | --- |
+| Win rate | Winning completed trades divided by all completed trades, including breakevens. |
+| Profit factor | Gross winning P&L divided by the absolute gross losing P&L; unavailable without losing trades. |
+| Expectancy / trade | Average gross P&L per completed trade, including breakevens; trade sizes are not normalized. |
+| Payoff ratio | Average winning trade divided by the absolute average losing trade; requires both wins and losses. |
+| Average win/loss, gross trade P&L, completed trades, holding time | Summary of complete position lifecycles selected by exit time. |
+| Total return | Compounded daily returns after removing external funding. |
+| Sharpe | Mean daily return divided by sample standard deviation, multiplied by √252; assumes a 0% risk-free rate. |
+| Sortino | Mean daily return divided by downside deviation, multiplied by √252; assumes a 0% target. Downside deviation uses the squared negative returns averaged over **all** observed days. |
+| Annualized volatility | Sample daily return standard deviation multiplied by √252. |
+| Maximum drawdown | Largest peak-to-trough decline in compounded daily wealth, shown as a positive loss percentage. |
+| CAGR | Compounded return annualized using elapsed calendar time and 365.25 days per year; requires at least 365 elapsed days. |
+| Calmar | CAGR divided by maximum drawdown over the same observed period; requires CAGR and a nonzero drawdown. |
+
+Trade metrics use gross execution P&L and exclude fees and open positions. Account return and
+risk metrics use separate daily equity history, including open positions, fees, and dividends.
+Each daily return is `(ending equity − starting equity − external funding) / starting equity`.
+This assumes funding occurs at period end, so intraday deposits and withdrawals make the result
+an approximation. The compounded **Total return** can differ from the chart percentage, which
+uses net account P&L divided by starting equity.
+
+Only completed NYSE sessions are used. Current partial sessions and the initial partial session
+of a selected range or newly funded account are excluded; the displayed sample dates show the
+actual coverage. Drawdowns between daily closes are not captured. Sharpe, Sortino, and volatility
+require at least two daily returns, so **1D** cannot supply them; select a longer timeframe.
+Sharpe is unavailable with zero volatility, and Sortino is unavailable without negative returns.
+Missing daily sessions, unresolved funding, nonpositive return bases, and undefined ratios display
+as **—** with a reason. Cached data fetched before a session closes remains partial until a
+subsequent history refresh confirms its close.
 
 ## Performance and storage
 

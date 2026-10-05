@@ -14,6 +14,8 @@ import plotly.graph_objects as go
 from dash import Dash, Input, Output, State, ctx, dcc, html, no_update
 
 from alpaca_dashboard.accounting import order_rows, position_rows, trade_rows
+from alpaca_dashboard.analytics import analysis_window, strategy_metrics
+from alpaca_dashboard.analytics_ui import analysis_content
 from alpaca_dashboard.performance import performance_series
 from alpaca_dashboard.timeframes import resolve_window
 
@@ -537,6 +539,12 @@ def _layout(refresh_seconds):
                                 className="activity-tab",
                                 selected_className="activity-tab-selected",
                             ),
+                            dcc.Tab(
+                                label="Strategy analysis",
+                                value="analysis",
+                                className="activity-tab",
+                                selected_className="activity-tab-selected",
+                            ),
                         ],
                     ),
                     html.Div(
@@ -562,6 +570,7 @@ def _layout(refresh_seconds):
                                         className="export-button",
                                     ),
                                 ],
+                                id="table-actions",
                                 className="table-actions",
                             ),
                         ],
@@ -576,6 +585,15 @@ def _layout(refresh_seconds):
                     ),
                     html.Div(
                         _grid("orders", ORDER_COLUMNS), id="orders-panel", style={"display": "none"}
+                    ),
+                    html.Div(
+                        html.Div(
+                            id="analysis-content",
+                            role="region",
+                            **{"aria-label": "Strategy metrics"},
+                        ),
+                        id="analysis-panel",
+                        style={"display": "none"},
                     ),
                     html.Div(
                         id="trade-details", className="trade-details", style={"display": "none"}
@@ -769,10 +787,43 @@ def create_app(service):
         )
 
     @app.callback(
+        Output("analysis-content", "children"),
+        Input("snapshot", "data"),
+        Input("accepted-ranges", "data"),
+        Input("activity-tab", "value"),
+    )
+    def render_analysis(snapshot, ranges, tab):
+        if tab != "analysis":
+            return no_update
+        snapshot = snapshot or {}
+        selected = (ranges or initial_ranges())["history"]
+        window = selection_window(selected, snapshot)
+        history = service.history(analysis_window(window))
+        trades = trade_rows(
+            snapshot.get("activities", []),
+            snapshot.get("positions", []),
+            snapshot.get("orders", []),
+            history_complete=snapshot.get("history_complete", False),
+        )
+        result = strategy_metrics(
+            history.get("data"),
+            trades,
+            window,
+            account=snapshot.get("account"),
+            activities=snapshot.get("activities", []),
+            as_of=snapshot.get("as_of"),
+            history_as_of=history.get("as_of"),
+            history_complete=snapshot.get("history_complete", False),
+        )
+        return analysis_content(result, window, history)
+
+    @app.callback(
         Output("trades-panel", "style"),
         Output("positions-panel", "style"),
         Output("orders-panel", "style"),
         Output("table-note", "children"),
+        Output("analysis-panel", "style"),
+        Output("table-actions", "style"),
         Input("activity-tab", "value"),
     )
     def select_tab(tab):
@@ -782,6 +833,10 @@ def create_app(service):
                 "All current holdings · Always visible, regardless of the history timeframe"
             ),
             "orders": "Orders by submission time · Includes bracket and child orders",
+            "analysis": (
+                "Strategy analysis · Uses the selected activity timeframe · "
+                "Account-wide results; individual strategies are not tagged"
+            ),
         }
         return (
             *(
@@ -789,6 +844,8 @@ def create_app(service):
                 for name in ("trades", "positions", "orders")
             ),
             notes[tab],
+            {} if tab == "analysis" else {"display": "none"},
+            {"display": "none"} if tab == "analysis" else {},
         )
 
     @app.callback(
