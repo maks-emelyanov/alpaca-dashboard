@@ -1,4 +1,4 @@
-"""Presentation of strategy metrics, including sample sizes and unavailable values."""
+"""Presentation of strategy metrics and unavailable values."""
 
 from __future__ import annotations
 
@@ -11,6 +11,24 @@ from .models import number, timestamp
 from .sessions import NEW_YORK
 
 PRIMARY_METRICS = ("win_rate", "sharpe", "cagr", "max_drawdown")
+METRIC_CAPTIONS = {
+    "win_rate": "Winning trades / total",
+    "sharpe": "Return / volatility",
+    "cagr": "Annualized growth",
+    "max_drawdown": "Peak-to-trough decline",
+    "total_return": "Compounded return (est.)",
+    "sortino": "Return / downside risk",
+    "volatility": "Annualized variation",
+    "calmar": "CAGR / max drawdown",
+    "trade_count": "Trades closed in range",
+    "profit_factor": "Gross profit / gross loss",
+    "expectancy": "Average P&L per trade",
+    "payoff_ratio": "Avg win / avg loss",
+    "average_win": "Profit per winning trade",
+    "average_loss": "Loss per losing trade",
+    "gross_pnl": "Total realized P&L",
+    "average_duration": "Average time in a trade",
+}
 
 
 def _value(metric):
@@ -39,7 +57,11 @@ def _card(key, metric):
         [
             html.Div(metric["label"], className="analysis-metric-label"),
             html.Div(_value(metric), className="analysis-metric-value"),
-            html.P(metric["definition"], className="analysis-metric-definition"),
+            html.P(
+                METRIC_CAPTIONS[key],
+                title=metric["definition"],
+                className="analysis-metric-definition",
+            ),
             html.P(reason, className="analysis-metric-reason") if reason else None,
         ],
         id=f"analysis-{key}",
@@ -56,11 +78,11 @@ def _date_label(value):
 def analysis_content(result, window, history):
     metrics = result["metrics"]
     coverage = result["coverage"]
-    notes = list(result.get("notes", []))
+    status = []
     if history.get("loading"):
-        notes.insert(0, "Loading daily account history. Available trade statistics appear below.")
+        status.append("Loading daily account history. Available trade statistics appear below.")
     if history.get("error"):
-        notes.insert(0, f"Daily history refresh paused. {history['error']}")
+        status.append(f"Daily history refresh paused. {history['error']}")
     period = (
         f"{window.preset} · {_date_label(window.start)} – "
         f"{_date_label(window.end - timedelta(microseconds=1))}"
@@ -70,11 +92,11 @@ def analysis_content(result, window, history):
             [
                 html.Div(
                     [
-                        html.Div("PERFORMANCE & RISK", className="eyebrow"),
-                        html.H2("Strategy analysis"),
+                        html.H3("Performance overview", className="analysis-section-title"),
                         html.P(
-                            "Assess the account as a whole. If multiple strategies share this "
-                            "account, these metrics combine their results."
+                            "Account-wide returns, risk, and trade outcomes "
+                            "for the selected period.",
+                            className="analysis-section-note",
                         ),
                     ]
                 ),
@@ -83,21 +105,9 @@ def analysis_content(result, window, history):
             className="analysis-heading",
         ),
         html.Div(
-            [
-                html.Span(f"Daily returns: {coverage['used_days']}"),
-                html.Span(f"Completed trades: {coverage['valid_trade_count']}"),
-                html.Span(
-                    f"Wins: {coverage['wins']} / Losses: {coverage['losses']} / "
-                    f"Breakeven: {coverage['breakeven']}"
-                ),
-                html.Span(f"{coverage['excluded']} incomplete records excluded"),
-            ],
-            className="analysis-coverage",
-        ),
-        html.Div(
-            html.Ul([html.Li(note) for note in dict.fromkeys(notes)]) if notes else None,
-            id="analysis-notes",
-            className="analysis-notes",
+            " · ".join(status),
+            id="analysis-status",
+            className="performance-warning",
             role="status",
         ),
         html.Div(
@@ -122,8 +132,7 @@ def analysis_content(result, window, history):
         html.H3("Trade outcomes", className="analysis-section-title"),
         html.P(
             "Completed position lifecycles, selected by exit time. Gross execution P&L "
-            "excludes fees and open positions; grid search and filters do not change "
-            "these metrics.",
+            "excludes fees and open positions.",
             className="analysis-section-note",
         ),
         html.Div(
@@ -133,26 +142,5 @@ def analysis_content(result, window, history):
                 if metric["group"] == "trades" and key not in PRIMARY_METRICS
             ],
             className="analysis-grid",
-        ),
-        html.Details(
-            [
-                html.Summary("How these metrics are calculated"),
-                html.P(
-                    "Daily returns remove external deposits and withdrawals using an "
-                    "end-of-period cash-flow convention, then compound the adjusted returns. "
-                    "Funding during a session can make this an approximation. "
-                    "Only completed NYSE sessions are used; intraday drawdowns are not captured."
-                ),
-                html.P(
-                    "Sharpe and Sortino assume a 0% risk-free rate and target return, with "
-                    "252 trading days per year. CAGR uses elapsed calendar time and requires "
-                    "at least one year of history. Unavailable or undefined results appear as —."
-                ),
-                html.P(
-                    "Use sample size, losses and drawdowns together with returns. Paper account "
-                    "results do not measure live execution quality or prove future profitability."
-                ),
-            ],
-            className="analysis-methodology",
         ),
     ]

@@ -17,6 +17,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .client import TERMINAL_ORDER_STATUSES, AlpacaAPIError, AlpacaReadOnlyClient
+from .market import market_schedule
 
 _NEW_YORK = ZoneInfo("America/New_York")
 _ACTIVITY_OVERLAP = timedelta(days=7)
@@ -91,6 +92,7 @@ class _History:
     due: float = 0.0
     last_seen: float = field(default_factory=time.monotonic)
     failures: int = 0
+    requested: bool = True
 
 
 class DashboardService:
@@ -124,6 +126,8 @@ class DashboardService:
         self._thread: threading.Thread | None = None
         self._account_id: str | None = None
         self._backfilled = False
+        self._polling = False
+        self._next_poll = 0.0
         self._newest_order_id: str | None = None
         self._histories: dict[str, _History] = {}
         self._saved_histories: dict[str, dict] = {}
@@ -179,6 +183,39 @@ class DashboardService:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return copy.deepcopy(self._snapshot)
+
+    def refresh_delay(self, snapshot: dict[str, Any] | None = None) -> float:
+        """Browser cadence: finish queued work, then sleep until the next open."""
+        with self._lock:
+            if snapshot is not None and snapshot != self._snapshot:
+                return self.refresh_seconds
+            pending = (
+                self._snapshot["loading"]
+                or (
+                    self._thread is not None
+                    and (
+                        self._polling or time.monotonic() + self.refresh_seconds >= self._next_poll
+                    )
+                )
+            ) or (
+                self._account_id is not None
+                and any(
+                    entry.requested and time.monotonic() - entry.last_seen <= 120
+                    for entry in self._histories.values()
+                )
+            )
+            clock = copy.deepcopy(self._snapshot["clock"])
+        if pending:
+            return self.refresh_seconds
+        return self._market_delay(clock)
+
+    def _market_delay(self, clock: dict) -> float:
+        now = datetime.now(UTC)
+        schedule = market_schedule(clock, now)
+        if schedule.next_transition is None:
+            return self.refresh_seconds
+        remaining = max(0.01, (schedule.next_transition - now).total_seconds())
+        return min(self.refresh_seconds, remaining) if schedule.is_open else remaining
 
     def history(self, window: Any) -> dict[str, Any]:
         identity = _history_identity(window)
@@ -329,10 +366,16 @@ class DashboardService:
         with self._lock:
             window = entry.window
         try:
+            moving_end = window.live and getattr(
+                window, "preset", window.key.split(":")[0]
+            ) not in {
+                "1D",
+                "CUSTOM",
+            }
             with self._api_lock:
                 data = self.client.get_portfolio_history(
                     window.start,
-                    window.end,
+                    max(window.end, datetime.now(UTC)) if moving_end else window.end,
                     window.resolution,
                 )
             result = {
@@ -350,10 +393,12 @@ class DashboardService:
             with self._lock:
                 entry.result = result
                 entry.failures = 0
+                entry.requested = False
                 entry.due = time.monotonic() + _HISTORY_INTERVAL
         except Exception as exc:
             with self._lock:
                 entry.failures += 1
+                entry.requested = False
                 entry.result.update(error=_safe_error(exc), loading=False)
                 entry.due = time.monotonic() + min(
                     60.0,
@@ -368,10 +413,14 @@ class DashboardService:
     def _run(self) -> None:
         next_poll = 0.0
         failures = 0
+        was_open = False
         while not self._stop.is_set():
             self._wake.clear()
             now = time.monotonic()
             if now >= next_poll:
+                with self._lock:
+                    self._polling = True
+                    previous_clock = copy.deepcopy(self._snapshot["clock"])
                 try:
                     self._poll_once()
                     failures = 0
@@ -379,22 +428,80 @@ class DashboardService:
                     failures += 1
                     with self._lock:
                         self._snapshot.update(error=_safe_error(exc), loading=False)
-                delay = self.refresh_seconds
-                if failures:
+                with self._lock:
+                    clock = copy.deepcopy(self._snapshot["clock"])
+                    snapshot_time = _timestamp(self._snapshot["as_of"])
+                observed_at = datetime.now(UTC)
+                schedule = market_schedule(clock, observed_at)
+                close = _timestamp(clock.get("next_close"))
+                if close is None or close > observed_at:
+                    close = _timestamp(previous_clock.get("next_close"))
+                if (
+                    not schedule.is_open
+                    and snapshot_time is not None
+                    and (close is None or close > observed_at)
+                ):
+                    account_schedule = market_schedule({}, snapshot_time)
+                    close = account_schedule.next_transition if account_schedule.is_open else None
+                if (
+                    not failures
+                    and not schedule.is_open
+                    and close is not None
+                    and snapshot_time is not None
+                    and snapshot_time < close <= observed_at
+                ):
+                    # A slow startup/backfill can finish after the close even
+                    # though its account data was read while the market was open.
+                    # Fetch the final account snapshot before going to sleep.
+                    was_open = True
+                    next_poll = 0
+                    with self._lock:
+                        self._next_poll = next_poll
+                        self._polling = False
+                    continue
+                delay = self._market_delay(clock)
+                if failures and schedule.is_open:
                     delay = min(max(60.0, delay), delay * 2 ** min(failures - 1, 8))
+                    if schedule.next_transition is not None:
+                        delay = min(
+                            delay,
+                            max(
+                                0.01,
+                                (schedule.next_transition - datetime.now(UTC)).total_seconds(),
+                            ),
+                        )
+                if was_open and not schedule.is_open:
+                    with self._lock:
+                        for entry in self._histories.values():
+                            # Inactive ranges also need a closing refresh, but
+                            # remain queued until a browser selects them again.
+                            entry.requested = True
+                            entry.due = 0
+                was_open = schedule.is_open
                 next_poll = time.monotonic() + delay
+                with self._lock:
+                    self._next_poll = next_poll
+                    self._polling = False
             if self._stop.is_set():
                 break
             now = time.monotonic()
             with self._lock:
+                is_open = market_schedule(self._snapshot["clock"], datetime.now(UTC)).is_open
                 pending = [
                     (key, entry)
                     for key, entry in self._histories.items()
-                    if entry.due <= now and now - entry.last_seen <= 120
+                    if (entry.requested or (is_open and entry.due <= now))
+                    and now - entry.last_seen <= 120
                 ]
                 ready = self._account_id is not None
             if ready and pending:
                 identity, entry = min(pending, key=lambda item: item[1].due)
                 self._refresh_history(identity, entry)
                 continue
-            self._wake.wait(timeout=max(0.01, min(1.0, next_poll - time.monotonic())))
+            wake_at = next_poll
+            if ready and is_open:
+                with self._lock:
+                    for entry in self._histories.values():
+                        if now - entry.last_seen <= 120:
+                            wake_at = min(wake_at, entry.due)
+            self._wake.wait(timeout=max(0.01, wake_at - time.monotonic()))

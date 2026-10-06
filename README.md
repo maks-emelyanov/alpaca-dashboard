@@ -65,7 +65,7 @@ uv run alpaca-dashboard \
 | `--env-file PATH` | `.env` | Read credentials from this file, with the environment fallback described above. |
 | `--cache-db PATH` | `data/dashboard.sqlite` | Use a local SQLite cache tied to one account. Parent directories are created as needed. |
 | `--port INTEGER` | `8050` | Listen on `127.0.0.1`; valid ports are 1–65535. |
-| `--refresh-seconds NUMBER` | `5` | Poll account data at this interval; must be finite and at least one second. |
+| `--refresh-seconds NUMBER` | `5` | Poll account data at this interval during regular market hours; must be finite and at least one second. |
 | `--help` | — | Print command help and exit. |
 
 All relative paths resolve against the launch directory. Run the command from the relevant project's root, or pass explicit paths. The module command `python -m alpaca_dashboard` accepts the same options.
@@ -74,7 +74,15 @@ All relative paths resolve against the launch directory. Run the command from th
 
 The account-value headline and dollar/percentage P&L follow the hovered chart point, returning to period totals when the pointer leaves. Chart and table ranges offer **1D, 1W, 1M, 3M, 6M, YTD, 1Y, ALL, and CUSTOM**. Controls start linked; a separate table selector appears when unlinked. Relinking applies the chart's range. Custom dates include both selected days in New York time.
 
-1D follows the current or most recent regular NYSE session, including holidays, early closes, and DST. Longer ranges use progressively coarser history; ALL starts at account inception, subject to available broker records. Historical chart data refreshes once per minute and on range changes, while current equity updates between history refreshes. Chart zoom and table filters, selection, sorting, and pagination survive refreshes.
+1D follows the current or most recent regular NYSE session, including holidays, early closes, and DST. Longer ranges use progressively coarser history; ALL starts at account inception, subject to available broker records. During regular market hours, historical chart data refreshes once per minute, while current equity updates between history refreshes. Chart zoom and table filters, selection, sorting, and pagination survive refreshes.
+
+Outside regular market hours, automatic broker polling and browser updates pause after the closing update and resume at the next market open. Starting the dashboard still loads account data once, and changing timeframes or opening Strategy analysis loads the requested history. The schedule follows the broker clock, with the NYSE calendar covering weekends, holidays, early closes, and DST when needed.
+
+The closing update refreshes the account snapshot and active history ranges. Previously viewed
+ranges that were inactive at the close refresh when selected again. After-hours range and tab
+changes briefly resume browser updates to display the requested history, then return to sleep.
+Account balances, positions, and orders remain at their last snapshot until the next market open
+or a dashboard restart.
 
 - **Trade history:** completed position lifecycles reconstructed from fills, including partial fills, scaling, shorts, fractional shares, and reversals. The selected range filters exit times. Select a trade for execution details.
 - **Open now:** every current holding, using broker basis, quantities, prices, returns, and linked stop/target orders. Holdings remain visible regardless of the selected history range.
@@ -94,11 +102,12 @@ while **Link timeframes** is checked. Uncheck it to choose a separate activity t
 Table search and column filters do not affect metrics. Daily history is requested when this
 tab is active; trade statistics can appear while equity history is still loading.
 
-The view shows sample sizes, available daily return dates, incomplete records excluded from the
-trade sample, and an explanation for each unavailable metric. Undated incomplete executions
-receive a separate note because they cannot be assigned to a selected period. Samples below
-30 completed trades or 30 daily returns are labeled as small. These labels are informational,
-not a profitability score or a statistical confidence guarantee.
+The view shows metric cards, available daily return dates, and an explanation for each unavailable
+metric. Hover over a metric caption for its full definition. Trade statistics exclude incomplete
+executions and records without a usable exit time; **Completed trades** counts only the included
+position lifecycles.
+Loading and refresh failures appear as status messages. Metric formulas and assumptions are listed
+below.
 
 | Metric | Calculation and requirements |
 | --- | --- |
@@ -124,12 +133,15 @@ uses net account P&L divided by starting equity.
 
 Only completed NYSE sessions are used. Current partial sessions and the initial partial session
 of a selected range or newly funded account are excluded; the displayed sample dates show the
-actual coverage. Drawdowns between daily closes are not captured. Sharpe, Sortino, and volatility
+actual coverage. If the broker has not yet published the latest daily closes, metrics use the
+available contiguous history through the displayed sample end date. Metrics and annualization
+use only these observed returns and dates. Trade metrics still cover the selected period.
+Drawdowns between daily closes are not captured. Sharpe, Sortino, and volatility
 require at least two daily returns, so **1D** cannot supply them; select a longer timeframe.
 Sharpe is unavailable with zero volatility, and Sortino is unavailable without negative returns.
-Missing daily sessions, unresolved funding, nonpositive return bases, and undefined ratios display
-as **—** with a reason. Cached data fetched before a session closes remains partial until a
-subsequent history refresh confirms its close.
+Missing starting closes or gaps within the daily sample, unresolved funding, nonpositive return
+bases, and undefined ratios display as **—** with a reason. Cached data fetched before a session
+closes remains partial until a subsequent history refresh confirms its close.
 
 ## Performance and storage
 
@@ -139,7 +151,7 @@ For ranges that include account creation, paper-account history may already show
 
 Missing history, unsupported instruments, security transfers, corporate actions, and unreconciled quantities are marked incomplete rather than assigned invented returns. Zero starting equity produces an unavailable percentage. Earlier zero-balance history is excluded when performance starts at the first recorded nonzero balance, with a dated informational note. Calculated trade returns target US equities; broker fields and executions remain visible for unsupported instruments.
 
-Snapshots and history are cached in `data/dashboard.sqlite`, bound to the account ID. Use a separate cache path for another account. The cache contains account details, positions, orders, activities, and portfolio history; it is not encrypted. Existing dashboard caches remain compatible; obsolete strategy fields are ignored. All browser sessions share one polling worker per process; outages retain the last successful data and retry with bounded backoff.
+Snapshots and history are cached in `data/dashboard.sqlite`, bound to the account ID. Use a separate cache path for another account. The cache contains account details, positions, orders, activities, and portfolio history; it is not encrypted. Existing dashboard caches remain compatible; obsolete strategy fields are ignored. All browser sessions share one polling worker per process; outages retain the last successful data and retry with bounded backoff during market hours. After-hours retries wait until the next market open.
 
 History caches can grow as you explore additional ranges. To rebuild a cache, stop the dashboard and move the SQLite file to a private backup location before restarting. The next launch downloads available broker history again.
 
@@ -177,7 +189,7 @@ uv build
 uv run --frozen --all-groups python .github/scripts/check_dist.py
 ```
 
-Tests use synthetic accounts and fake broker transports; no real credentials or `.env` file are needed. Browser tests cover updates, linked ranges, hover values, UI persistence, empty accounts, outage recovery, CSV export, and narrow layouts. Missing Playwright or Chromium causes browser tests to skip, so install Chromium before checking the full suite. For a quick check without browser tests:
+Tests use synthetic accounts and fake broker transports; no real credentials or `.env` file are needed. Browser tests cover updates, market-close sleep and market-open resumption, after-hours history requests, linked ranges, hover values, UI persistence, empty accounts, outage recovery, CSV export, and narrow layouts. Missing Playwright or Chromium causes browser tests to skip, so install Chromium before checking the full suite. For a quick check without browser tests:
 
 ```bash
 uv run --frozen --all-groups pytest --ignore=tests/test_dashboard_browser.py
@@ -194,7 +206,9 @@ The package includes its CSS and JavaScript assets and requires no frontend buil
 | HTTP 401 or 403 in the status banner | Check that both credentials belong to the intended paper account and are still valid. Restart after changing credentials. |
 | Cache belongs to another account | Pass a different `--cache-db` path for each account. |
 | Cache unavailable or startup failure | Confirm the cache directory is writable, disk space is available, and the selected port is free. Try another `--port` or cache path. |
-| Stale data or initial history loading | Check the status banner and connection. The dashboard retries failed requests and retains the last available data; initial backfill may take time. |
+| Data stops updating outside market hours | Automatic updates pause after the closing update and resume at the next market open. Changing a timeframe or opening Strategy analysis can load history; restart the dashboard to reload the account snapshot before the next open. |
+| Stale data or initial history loading | Check the status banner and connection. The dashboard retains the last available data and retries failures during market hours; after-hours retries wait until the next open. Initial backfill may take time. |
+| Strategy analysis sample ends before the selected period | The broker may not have published the latest daily close. Metrics use the displayed contiguous sample; trade metrics still use the selected period. Daily history resumes automatic refreshes at the next market open. |
 | Unavailable or incomplete returns | Review the displayed data-status note. Missing records, unsupported instruments, corporate actions, and zero starting equity can prevent a reliable calculation. |
 | Playwright cannot launch Chromium | Run the browser installation command above. On Linux, missing system libraries may require `uv run --frozen --all-groups playwright install --with-deps chromium`, which may need administrator access. |
 

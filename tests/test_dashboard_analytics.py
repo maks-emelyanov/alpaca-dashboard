@@ -172,15 +172,106 @@ def test_broker_base_value_can_anchor_first_day_without_a_prior_raw_bucket():
     assert value(metrics(raw), "total_return") == -1
 
 
-@pytest.mark.parametrize("kind", ["middle", "tail"])
-def test_missing_sessions_cannot_be_annualized_or_hide_drawdowns(kind):
+def test_missing_internal_sessions_cannot_be_annualized_or_hide_drawdowns():
     raw = history((100, 110, 121), (0, 0, 0), ("18", "21", "23"))
-    if kind == "tail":
-        raw = history((100, 110), (0, 0), ("18", "21"))
     result = metrics(raw, selected=window(end="2026-09-24T04:00:00Z"))
     for key in ("total_return", "max_drawdown", "sharpe", "cagr"):
         assert value(result, key) is None
         assert "missing a required session" in result["metrics"][key]["reason"]
+
+
+def test_missing_trailing_sessions_use_the_observed_sample_without_padding_returns():
+    selected = window(end="2026-09-26T04:00:00Z")
+    bounded = metrics(selected=selected, as_of=at("2026-09-22T20:00:00Z"))
+    delayed = metrics(selected=selected, history_as_of=at("2026-09-25T21:00:00Z"))
+
+    assert delayed["metrics"] == bounded["metrics"]
+    assert delayed["coverage"] == bounded["coverage"]
+    assert value(delayed, "total_return") == -1
+    assert value(delayed, "max_drawdown") == 10
+    assert value(delayed, "sharpe") == 0
+    assert delayed["coverage"]["used_days"] == 2
+    assert delayed["coverage"]["start"] == "2026-09-18T20:00:00+00:00"
+    assert delayed["coverage"]["end"] == "2026-09-22T20:00:00+00:00"
+
+
+def test_all_time_metrics_keep_available_history_and_include_a_new_close_only_after_fetch():
+    created = "2026-09-28T18:00:00Z"
+    selected = Window(at(created), at("2026-10-05T22:00:00.000001Z"), "1D", "ALL", True, "ALL")
+    raw = {
+        # Daily labels at UTC midnight belong to the preceding NY session.
+        "timestamp": [
+            at(day).timestamp()
+            for day in (
+                "2026-09-25T00:00:00Z",
+                "2026-09-26T00:00:00Z",
+                "2026-09-29T00:00:00Z",
+                "2026-09-30T00:00:00Z",
+                "2026-10-01T00:00:00Z",
+                "2026-10-02T00:00:00Z",
+                "2026-10-03T00:00:00Z",
+            )
+        ],
+        "equity": [0, 1000, 1000, 1100, 990, 990, 1089],
+        "base_value": 1000,
+        "base_value_asof": "2026-09-25",
+        "cashflow": {"JNLC": [0, 0, 1000, 0, 0, 0, 0]},
+    }
+    options = {
+        "selected": selected,
+        "account": {"created_at": created, "equity": "12345"},
+        "activities": [
+            {
+                "id": "synthetic-seed",
+                "activity_type": "JNLC",
+                "net_amount": "1000",
+                "date": "2026-09-28",
+            }
+        ],
+    }
+    bounded = metrics(raw, **options, as_of=at("2026-10-02T21:00:00Z"))
+    delayed = metrics(
+        raw,
+        **options,
+        as_of=at("2026-10-05T22:00:00Z"),
+        history_as_of=at("2026-10-05T21:59:00Z"),
+    )
+    assert delayed["metrics"] == bounded["metrics"]
+    assert delayed["coverage"] == bounded["coverage"]
+    assert value(delayed, "total_return") == Decimal("8.9")
+    assert value(delayed, "max_drawdown") == 10
+    assert value(delayed, "sharpe") is not None
+    assert value(delayed, "sortino") is not None
+    assert delayed["coverage"]["used_days"] == 4
+    assert delayed["coverage"]["start"] == "2026-09-28T20:00:00+00:00"
+    assert delayed["coverage"]["end"] == "2026-10-02T20:00:00+00:00"
+    for key in ("cagr", "calmar"):
+        assert value(delayed, key) is None
+        assert "365 days" in delayed["metrics"][key]["reason"]
+
+    raw["timestamp"].append(at("2026-10-06T00:00:00Z").timestamp())
+    raw["equity"].append("980.1")
+    raw["cashflow"]["JNLC"].append(0)
+    preclose = metrics(
+        raw,
+        **options,
+        as_of=at("2026-10-05T22:00:00Z"),
+        history_as_of=at("2026-10-05T19:59:00Z"),
+    )
+    assert preclose["metrics"] == delayed["metrics"]
+    assert preclose["coverage"] == delayed["coverage"]
+
+    refreshed = metrics(
+        raw,
+        **options,
+        as_of=at("2026-10-05T22:00:00Z"),
+        history_as_of=at("2026-10-05T21:59:00Z"),
+    )
+    assert value(refreshed, "total_return") == Decimal("-1.99")
+    assert value(refreshed, "max_drawdown") == Decimal("10.9")
+    assert refreshed["coverage"]["used_days"] == 5
+    assert refreshed["coverage"]["start"] == delayed["coverage"]["start"]
+    assert refreshed["coverage"]["end"] == "2026-10-05T20:00:00+00:00"
 
 
 def test_missing_leading_sessions_cannot_be_mistaken_for_an_initial_partial_session():
@@ -226,7 +317,8 @@ def test_short_history_does_not_extrapolate_cagr():
     assert "365 days" in result["metrics"]["cagr"]["reason"]
 
 
-def test_year_long_cagr_uses_calendar_elapsed_time_and_calmar_uses_drawdown():
+@pytest.mark.parametrize("end", ["2026-09-22T04:00:00Z", "2026-09-25T04:00:00Z"])
+def test_year_long_cagr_uses_observed_calendar_elapsed_time_and_calmar_uses_drawdown(end):
     first, last = at("2025-09-19T20:00:00Z"), at("2026-09-21T20:00:00Z")
     day, stamps = first.date(), []
     while day <= last.date():
@@ -238,12 +330,13 @@ def test_year_long_cagr_uses_calendar_elapsed_time_and_calmar_uses_drawdown():
     raw = {"timestamp": stamps, "equity": equities, "cashflow": {}}
     result = metrics(
         raw,
-        selected=window("2025-09-20T04:00:00Z", "2026-09-22T04:00:00Z"),
+        selected=window("2025-09-20T04:00:00Z", end),
     )
     expected = (1.1 ** (365.25 / (last - first).days) - 1) * 100
     assert float(value(result, "cagr")) == pytest.approx(expected)
     assert value(result, "max_drawdown") == 10
     assert float(value(result, "calmar")) == pytest.approx(expected / 10)
+    assert result["coverage"]["end"] == last.isoformat()
 
 
 @pytest.mark.parametrize("broken", ["equity", "cashflow", "security", "non_session", "duplicate"])

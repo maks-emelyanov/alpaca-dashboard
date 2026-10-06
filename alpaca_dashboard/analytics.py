@@ -392,15 +392,9 @@ def _daily_returns(
         )
     if not returns:
         return []
-    # A stale result must not look like complete coverage through a newer close.
-    last_day = min(cutoff, window.end - timedelta(microseconds=1)).astimezone(NEW_YORK).date()
-    day = last.astimezone(NEW_YORK).date() + timedelta(days=1)
-    while day <= last_day:
-        session = _calendar().session(day)
-        if session and session.close <= cutoff and session.close < window.end:
-            _unavailable(result, "equity", "Daily history is missing a required session close.")
-            return None
-        day += timedelta(days=1)
+    # Daily history can lag a completed session. Keep the contiguous observed
+    # sample and expose its actual dates; never invent returns for missing days.
+    # Leading and internal gaps have already been rejected above.
     result["coverage"].update(used_days=len(returns), start=start.isoformat(), end=last.isoformat())
     return returns
 
@@ -470,6 +464,8 @@ def strategy_metrics(
     ``trades`` must be reconstructed across account history before filtering.
     ``history_as_of`` is the fetch time of this specific cached history response,
     so a live provisional daily bar cannot become final just as the clock advances.
+    Metrics use the contiguous completed sample reported in ``coverage``, which
+    can end before the selected period when the broker's daily history is delayed.
     """
     result = {
         "metrics": {

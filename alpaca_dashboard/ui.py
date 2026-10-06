@@ -623,9 +623,29 @@ def create_app(service):
     )
     app.layout = lambda: _layout(service.refresh_seconds)
 
-    @app.callback(Output("snapshot", "data"), Input("refresh", "n_intervals"))
-    def refresh(_):
-        return service.snapshot()
+    @app.callback(
+        Output("snapshot", "data"),
+        Output("refresh", "interval"),
+        Input("refresh", "n_intervals"),
+        Input("accepted-ranges", "data"),
+        Input("activity-tab", "value"),
+        State("snapshot", "data"),
+    )
+    def refresh(_, ranges, tab, previous):
+        interval = max(1, int(service.refresh_seconds * 1000))
+        if previous and ctx.triggered_id in {"accepted-ranges", "activity-tab"}:
+            # Range/tab callbacks may queue history after this callback finishes.
+            return no_update, interval
+        snapshot = service.snapshot()
+        if snapshot == previous:
+            delay = getattr(service, "refresh_delay", lambda snapshot: service.refresh_seconds)(
+                snapshot
+            )
+            # Browsers store timer delays as signed 32-bit milliseconds.
+            interval = max(1, min(2_147_483_647, int(delay * 1000)))
+        # Even an unchanged snapshot must render newly completed history requests.
+        # Changed snapshots get one normal tick so render callbacks can queue history.
+        return snapshot, interval
 
     @app.callback(
         Output("chart-preset", "value"),

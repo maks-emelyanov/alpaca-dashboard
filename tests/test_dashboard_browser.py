@@ -1,6 +1,7 @@
 """Real-browser checks against synthetic data; no brokerage credentials or requests."""
 
 from threading import Thread
+from time import monotonic
 
 import pytest
 
@@ -56,6 +57,24 @@ def select_preset(page, component, value):
 
 def checked_preset(page, component):
     return page.locator(f"#{component}-preset input:checked").evaluate("input => input.value")
+
+
+def wait_for_refresh_interval(page, predicate):
+    """Observe the interval Dash actually sends to the browser."""
+    for _ in range(20):
+        response = page.wait_for_event(
+            "response",
+            predicate=lambda value: (
+                value.request.method == "POST"
+                and value.url.split("?", 1)[0].endswith("/_dash-update-component")
+                and "refresh.interval" in value.request.post_data_json.get("output", "")
+            ),
+            timeout=10000,
+        )
+        interval = response.json()["response"]["refresh"]["interval"]
+        if predicate(interval):
+            return interval
+    pytest.fail("The browser did not receive the expected refresh interval")
 
 
 @pytest.mark.parametrize(
@@ -239,6 +258,112 @@ def test_refresh_preserves_grid_and_chart_state_and_recovers(dashboard):
     assert not errors
 
 
+@pytest.mark.parametrize("dashboard", [{"refresh_seconds": 0.2}], indirect=True)
+def test_closed_market_sleeps_and_finishes_requested_chart_and_analysis_history(
+    dashboard, monkeypatch
+):
+    page, service, errors = dashboard
+    closed = service.snapshot()
+    closed["clock"] = {"is_open": False}
+    original_history = service.history
+    pending = {}
+
+    def snapshot():
+        service.calls += 1
+        return closed
+
+    def history(window):
+        if window.key == "1W" or window.key.startswith("analytics:"):
+            if not pending.setdefault(window.key, False):
+                return {"data": None, "loading": True, "error": None}
+        return original_history(window)
+
+    monkeypatch.setattr(service, "snapshot", snapshot)
+    monkeypatch.setattr(service, "history", history)
+    monkeypatch.setattr(
+        service,
+        "refresh_delay",
+        lambda snapshot=None: (
+            service.refresh_seconds if any(not ready for ready in pending.values()) else 30
+        ),
+        raising=False,
+    )
+    wait_for_refresh_interval(page, lambda interval: interval == 30000)
+    playwright.expect(page.locator("#market-status")).to_contain_text("Market closed")
+    settled_calls = service.calls
+    page.wait_for_timeout(600)
+    assert service.calls == settled_calls
+
+    # A manual range change wakes the sleeping browser while history loads.
+    select_preset(page, "chart", "1W")
+    playwright.expect(page.locator("#performance-warning")).to_contain_text(
+        "Portfolio history is unavailable"
+    )
+    assert "1W" in pending
+    pending["1W"] = True
+    wait_for_refresh_interval(page, lambda interval: interval == 30000)
+    playwright.expect(page.locator("#pnl-value")).to_have_text("+$1,250.00")
+    settled_calls = service.calls
+    page.wait_for_timeout(600)
+    assert service.calls == settled_calls
+
+    # The analysis tab requests a distinct daily series and must render its
+    # completed response even though the broker snapshot itself has not changed.
+    page.locator("#activity-tab").get_by_text("Strategy analysis", exact=True).click()
+    playwright.expect(page.locator("#analysis-status")).to_contain_text(
+        "Loading daily account history"
+    )
+    assert "analytics:1W" in pending
+    pending["analytics:1W"] = True
+    wait_for_refresh_interval(page, lambda interval: interval == 30000)
+    playwright.expect(page.locator("#analysis-status")).to_be_empty()
+    playwright.expect(page.locator("#analysis-win_rate .analysis-metric-value")).to_have_text(
+        "100.00%"
+    )
+    settled_calls = service.calls
+    page.wait_for_timeout(600)
+    assert service.calls == settled_calls
+    assert not errors
+
+
+@pytest.mark.parametrize("dashboard", [{"refresh_seconds": 0.2}], indirect=True)
+def test_closed_market_browser_resumes_at_scheduled_open(dashboard, monkeypatch):
+    page, service, errors = dashboard
+    closed = service.snapshot()
+    closed["clock"] = {"is_open": False}
+    opens_at = monotonic() + 3
+
+    def snapshot():
+        service.calls += 1
+        if monotonic() < opens_at:
+            return closed
+        return {
+            **closed,
+            "account": {**closed["account"], "equity": service.equity},
+            "clock": {"is_open": True},
+        }
+
+    monkeypatch.setattr(service, "snapshot", snapshot)
+    monkeypatch.setattr(
+        service,
+        "refresh_delay",
+        lambda snapshot=None: max(service.refresh_seconds, opens_at - monotonic()),
+        raising=False,
+    )
+    wait_for_refresh_interval(page, lambda interval: interval > 500)
+    playwright.expect(page.locator("#market-status")).to_contain_text("Market closed")
+    settled_calls = service.calls
+    page.wait_for_timeout(400)
+    assert service.calls == settled_calls
+
+    service.equity = "102000"
+    playwright.expect(page.locator("#account-equity")).to_have_text("$102,000.00", timeout=5000)
+    playwright.expect(page.locator("#market-status")).to_have_text("Market open")
+    service.equity = "103000"
+    playwright.expect(page.locator("#account-equity")).to_have_text("$103,000.00", timeout=5000)
+    assert not errors
+
+
 def test_custom_validation_hover_empty_and_mobile(dashboard):
     page, service, errors = dashboard
     playwright.expect(page.locator("#pnl-value")).to_have_text("+$1,250.00")
@@ -382,7 +507,14 @@ def test_strategy_analysis_ranges_trade_sample_and_mobile_layout(dashboard):
     # Linked controls use the chart's range for the completed trade sample.
     select_preset(page, "chart", "1W")
     playwright.expect(win_rate).to_have_text("100.00%")
-    playwright.expect(page.locator(".analysis-coverage")).to_contain_text("Completed trades: 1")
+    playwright.expect(page.locator("#analysis-trade_count .analysis-metric-value")).to_have_text(
+        "1"
+    )
+    playwright.expect(page.locator(".analysis-coverage, #analysis-notes")).to_have_count(0)
+    playwright.expect(page.locator("#analysis-panel details")).to_have_count(0)
+    playwright.expect(
+        page.locator(".analysis-section-note").filter(has_text="Available return sample:")
+    ).to_be_visible()
     playwright.expect(page.locator("#analysis-expectancy .analysis-metric-value")).to_have_text(
         "$50.00"
     )
@@ -402,8 +534,6 @@ def test_strategy_analysis_ranges_trade_sample_and_mobile_layout(dashboard):
     page.set_viewport_size({"width": 390, "height": 844})
     playwright.expect(win_rate).to_be_visible()
     page.wait_for_function("document.documentElement.scrollWidth <= window.innerWidth + 1")
-    page.locator("#analysis-panel details summary").click()
-    playwright.expect(page.locator("#analysis-panel details")).to_contain_text("252 trading days")
 
     page.locator("#activity-tab").get_by_text("Trade history", exact=True).click()
     playwright.expect(page.locator("#analysis-panel")).to_be_hidden()
@@ -418,12 +548,12 @@ def test_strategy_analysis_preserves_available_metrics_during_history_error(dash
     win_rate = page.locator("#analysis-win_rate .analysis-metric-value")
     playwright.expect(win_rate).to_have_text("100.00%")
     service.error = "Temporary portfolio history failure"
-    playwright.expect(page.locator("#analysis-notes")).to_contain_text(
+    playwright.expect(page.locator("#analysis-status")).to_contain_text(
         "Temporary portfolio history failure", timeout=12000
     )
     playwright.expect(win_rate).to_have_text("100.00%")
     service.error = None
-    playwright.expect(page.locator("#analysis-notes")).not_to_contain_text(
+    playwright.expect(page.locator("#analysis-status")).not_to_contain_text(
         "Temporary portfolio history failure", timeout=12000
     )
     assert not errors

@@ -190,6 +190,65 @@ def test_layout_and_assets_are_served_without_broker():
     assert client.get("/assets/dashboard.js").status_code == 200
 
 
+def test_refresh_sleeps_after_closed_market_data_and_history_settle(monkeypatch):
+    snapshot = {"account": {"equity": "1000"}, "clock": {"is_open": False}}
+    service = SimpleNamespace(
+        refresh_seconds=5,
+        snapshot=lambda: snapshot,
+        refresh_delay=lambda snapshot: 16 * 60 * 60,
+    )
+    app = ui.create_app(service)
+    refresh = callback(app, "snapshot")
+    monkeypatch.setattr(ui, "ctx", SimpleNamespace(triggered_id="refresh"))
+
+    # Let newly rendered charts queue their history before suspending the timer.
+    assert refresh(0, ui.initial_ranges(), "trades", {}) == (snapshot, 5000)
+    data, interval = refresh(1, ui.initial_ranges(), "trades", snapshot)
+    assert data == snapshot
+    assert interval == 16 * 60 * 60 * 1000
+
+    # Pending history briefly resumes ticks, then the final tick renders the result.
+    service.refresh_delay = lambda snapshot: 5
+    assert refresh(2, ui.initial_ranges(), "analysis", snapshot) == (snapshot, 5000)
+    service.refresh_delay = lambda snapshot: 16 * 60 * 60
+    assert refresh(3, ui.initial_ranges(), "analysis", snapshot) == (snapshot, interval)
+
+
+def test_initial_range_callback_loads_snapshot_before_first_timer_tick(monkeypatch):
+    service = SimpleNamespace(refresh_seconds=3600, snapshot=lambda: SNAPSHOT)
+    app = ui.create_app(service)
+    monkeypatch.setattr(ui, "ctx", SimpleNamespace(triggered_id="accepted-ranges"))
+    assert callback(app, "snapshot")(0, ui.initial_ranges(), "trades", {}) == (
+        SNAPSHOT,
+        3600000,
+    )
+
+
+@pytest.mark.parametrize("trigger", ["accepted-ranges", "activity-tab"])
+def test_range_and_tab_changes_rearm_sleeping_refresh_without_reading_snapshot(
+    monkeypatch, trigger
+):
+    # These interactions already render from the browser's stored snapshot.
+    app = ui.create_app(SimpleNamespace(refresh_seconds=5))
+    monkeypatch.setattr(ui, "ctx", SimpleNamespace(triggered_id=trigger))
+    data, interval = callback(app, "snapshot")(3, ui.initial_ranges(), "analysis", SNAPSHOT)
+    assert data is ui.no_update
+    assert interval == 5000
+
+
+def test_scheduled_refresh_resumes_normal_interval_when_market_opens(monkeypatch):
+    closed = {"account": {"equity": "1000"}, "clock": {"is_open": False}}
+    opened = {"account": {"equity": "1010"}, "clock": {"is_open": True}}
+    service = SimpleNamespace(
+        refresh_seconds=5, snapshot=lambda: opened, refresh_delay=lambda snapshot: 5
+    )
+    app = ui.create_app(service)
+    monkeypatch.setattr(ui, "ctx", SimpleNamespace(triggered_id="refresh"))
+    refresh = callback(app, "snapshot")
+    assert refresh(4, ui.initial_ranges(), "trades", closed) == (opened, 5000)
+    assert refresh(5, ui.initial_ranges(), "trades", opened) == (opened, 5000)
+
+
 def test_tables_leave_current_holdings_visible_for_historical_ranges(monkeypatch):
     service = SimpleNamespace(refresh_seconds=5)
     app = ui.create_app(service)

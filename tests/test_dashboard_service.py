@@ -323,3 +323,316 @@ def test_history_and_account_broker_requests_are_serialized(tmp_path):
     finally:
         broker.history_gate.set()
         service.close()
+
+
+def test_closed_market_fetches_initial_and_requested_data_without_recurring_polls(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr("alpaca_dashboard.service._HISTORY_INTERVAL", 0.03)
+    broker = Broker()
+    next_open = datetime.now(UTC) + timedelta(days=1)
+    broker.get_clock = lambda: {
+        "is_open": False,
+        "timestamp": datetime.now(UTC).isoformat(),
+        "next_open": next_open.isoformat(),
+    }
+    service = make_service(tmp_path, broker, refresh_seconds=0.02)
+    service.start()
+    try:
+        until(lambda: service.snapshot()["history_complete"])
+        assert service.refresh_delay() > 86000
+        service.history(window())
+        until(lambda: not service.history(window())["loading"])
+        threading.Event().wait(0.12)
+        assert sum(name == "account" for name, _ in broker.calls) == 1
+        assert sum(name == "history" for name, _ in broker.calls) == 1
+        assert service.refresh_delay() > 86000
+        broker.history_gate = threading.Event()
+        custom = window(key="CUSTOM", live=False)
+        assert service.history(custom)["loading"]
+        until(lambda: sum(name == "history" for name, _ in broker.calls) == 2)
+        assert service.refresh_delay() == service.refresh_seconds
+        broker.history_gate.set()
+        until(lambda: not service.history(custom)["loading"])
+        threading.Event().wait(0.08)
+        assert sum(name == "account" for name, _ in broker.calls) == 1
+        assert sum(name == "history" for name, _ in broker.calls) == 2
+        assert service.refresh_delay() > 86000
+    finally:
+        if broker.history_gate:
+            broker.history_gate.set()
+        service.close()
+
+
+def test_worker_resumes_at_open_and_finishes_once_at_close(tmp_path, monkeypatch):
+    monkeypatch.setattr("alpaca_dashboard.service._HISTORY_INTERVAL", 60)
+    broker = Broker()
+    opening = datetime.now(UTC) + timedelta(seconds=0.25)
+    closing = opening + timedelta(seconds=0.2)
+    next_opening = closing + timedelta(days=1)
+
+    def clock():
+        now = datetime.now(UTC)
+        return {
+            "timestamp": now.isoformat(),
+            "is_open": opening <= now < closing,
+            "next_open": (opening if now < opening else next_opening).isoformat(),
+            "next_close": closing.isoformat(),
+        }
+
+    broker.get_clock = clock
+    service = make_service(tmp_path, broker, refresh_seconds=0.03)
+    service.start()
+    try:
+        until(lambda: service.snapshot()["history_complete"])
+        service.history(window())
+        until(lambda: not service.history(window())["loading"])
+        assert not service.snapshot()["clock"]["is_open"]
+        assert sum(name == "account" for name, _ in broker.calls) == 1
+        until(lambda: service.snapshot()["clock"]["is_open"])
+        until(lambda: not service.snapshot()["clock"]["is_open"])
+        until(lambda: sum(name == "history" for name, _ in broker.calls) == 2)
+        final_snapshot = service.snapshot()
+        assert datetime.fromisoformat(final_snapshot["as_of"]) >= closing
+        account_count = sum(name == "account" for name, _ in broker.calls)
+        threading.Event().wait(0.1)
+        assert sum(name == "account" for name, _ in broker.calls) == account_count
+        assert sum(name == "history" for name, _ in broker.calls) == 2
+        assert service.refresh_delay() > 86000
+    finally:
+        service.close()
+
+
+def test_failed_on_demand_history_does_not_keep_polling_after_hours(tmp_path):
+    broker = Broker()
+    broker.get_clock = lambda: {
+        "is_open": False,
+        "next_open": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+    }
+    service = make_service(tmp_path, broker, refresh_seconds=0.02)
+    service.start()
+    try:
+        until(lambda: service.snapshot()["history_complete"])
+        broker.fail = True
+        service.history(window())
+        until(lambda: service.history(window())["error"] is not None)
+        threading.Event().wait(0.1)
+        assert sum(name == "account" for name, _ in broker.calls) == 1
+        assert sum(name == "history" for name, _ in broker.calls) == 1
+        assert service.refresh_delay() > 86000
+    finally:
+        service.close()
+
+
+def test_inactive_history_refreshes_once_when_revisited_after_close(tmp_path, monkeypatch):
+    now = datetime(2026, 10, 5, 19, 59, 59, tzinfo=UTC)
+    closing = datetime(2026, 10, 5, 20, tzinfo=UTC)
+
+    class ControlledDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz)
+
+    monkeypatch.setattr("alpaca_dashboard.service.datetime", ControlledDatetime)
+    broker = Broker()
+    broker.get_clock = lambda: {
+        "is_open": now < closing,
+        "timestamp": now.isoformat(),
+        "next_close": closing.isoformat(),
+        "next_open": "2026-10-06T13:30:00+00:00",
+    }
+    service = make_service(tmp_path, broker, refresh_seconds=0.02)
+    selected = window(key="1W", end=now)
+    service.start()
+    try:
+        until(lambda: service.snapshot()["history_complete"])
+        service.history(selected)
+        until(lambda: not service.history(selected)["loading"])
+        with service._lock:
+            entry = next(iter(service._histories.values()))
+            entry.last_seen = time.monotonic() - 121
+
+        now = closing
+        until(lambda: not service.snapshot()["clock"]["is_open"])
+        until(lambda: service.refresh_delay() > 60000)
+        assert sum(name == "history" for name, _ in broker.calls) == 1
+
+        broker.history["equity"] = [1010]
+        broker.history_gate = threading.Event()
+        service.history(selected)
+        until(lambda: sum(name == "history" for name, _ in broker.calls) == 2)
+        assert service.refresh_delay() == service.refresh_seconds
+        broker.history_gate.set()
+        until(lambda: service.history(selected)["data"]["equity"] == [1010])
+        account_count = sum(name == "account" for name, _ in broker.calls)
+        threading.Event().wait(0.08)
+        assert sum(name == "history" for name, _ in broker.calls) == 2
+        assert sum(name == "account" for name, _ in broker.calls) == account_count
+        assert service.refresh_delay() > 60000
+    finally:
+        if broker.history_gate:
+            broker.history_gate.set()
+        service.close()
+
+
+def test_initial_backfill_crossing_close_still_fetches_final_snapshot(tmp_path):
+    broker = Broker()
+    closing = datetime.now(UTC) + timedelta(seconds=0.08)
+    next_open = closing + timedelta(days=1)
+
+    def clock():
+        now = datetime.now(UTC)
+        return {
+            "is_open": now < closing,
+            "timestamp": now.isoformat(),
+            "next_close": closing.isoformat(),
+            "next_open": next_open.isoformat(),
+        }
+
+    def slow_orders(**kwargs):
+        threading.Event().wait(0.1)
+        return []
+
+    broker.get_clock = clock
+    broker.get_orders = slow_orders
+    service = make_service(tmp_path, broker, refresh_seconds=0.02)
+    service.start()
+    try:
+        until(
+            lambda: (
+                service.snapshot()["history_complete"]
+                and not service.snapshot()["clock"]["is_open"]
+            )
+        )
+        assert datetime.fromisoformat(service.snapshot()["as_of"]) >= closing
+        assert sum(name == "account" for name, _ in broker.calls) == 2
+        threading.Event().wait(0.06)
+        assert sum(name == "account" for name, _ in broker.calls) == 2
+        assert service.refresh_delay() > 86000
+    finally:
+        service.close()
+
+
+def test_failed_initial_request_outside_hours_waits_until_calendar_open(tmp_path, monkeypatch):
+    closed_at = datetime(2026, 10, 3, 15, tzinfo=UTC)
+
+    class ClosedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return closed_at.astimezone(tz)
+
+    monkeypatch.setattr("alpaca_dashboard.service.datetime", ClosedDatetime)
+    broker = Broker()
+    broker.fail = True
+    service = make_service(tmp_path, broker, refresh_seconds=0.02)
+    service.start()
+    try:
+        until(lambda: service.snapshot()["error"] is not None)
+        threading.Event().wait(0.1)
+        assert broker.calls == [("account", None)]
+        next_open = datetime(2026, 10, 5, 13, 30, tzinfo=UTC)
+        assert service.refresh_delay() == (next_open - closed_at).total_seconds()
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize(
+    ("preset", "live", "should_extend"),
+    [("1D", True, False), ("CUSTOM", True, False), ("1W", True, True), ("1W", False, False)],
+)
+def test_final_history_keeps_fixed_boundaries_and_advances_moving_windows(
+    tmp_path, preset, live, should_extend
+):
+    service = make_service(tmp_path)
+    service._poll_once()
+    before = datetime.now(UTC)
+    selected = window(key=preset, live=live, end=before - timedelta(minutes=1))
+    service.history(selected)
+    identity, entry = next(iter(service._histories.items()))
+    service._refresh_history(identity, entry)
+    _, (_, requested_end, _) = service.client.calls[-1]
+    if should_extend:
+        assert before <= requested_end <= datetime.now(UTC)
+    else:
+        assert requested_end == selected.end
+
+
+@pytest.mark.parametrize("final_poll_fails", [False, True])
+def test_browser_waits_for_final_close_attempt_and_receives_its_result(tmp_path, final_poll_fails):
+    broker = Broker()
+    closing = datetime.now(UTC) + timedelta(seconds=0.15)
+    next_open = closing + timedelta(days=1)
+    entered = threading.Event()
+    release = threading.Event()
+    original_account = broker.get_account
+
+    def gated_account():
+        if datetime.now(UTC) >= closing:
+            entered.set()
+            release.wait(2)
+            if final_poll_fails:
+                raise AlpacaAPIError("Broker unavailable", 503)
+        return original_account()
+
+    def clock():
+        now = datetime.now(UTC)
+        return {
+            "is_open": now < closing,
+            "timestamp": now.isoformat(),
+            "next_close": closing.isoformat(),
+            "next_open": next_open.isoformat(),
+        }
+
+    broker.get_account = gated_account
+    broker.get_clock = clock
+    service = make_service(tmp_path, broker, refresh_seconds=0.02)
+    service.start()
+    try:
+        assert entered.wait(2)
+        delivered = service.snapshot()
+        assert delivered["clock"]["is_open"]
+        assert service.refresh_delay(delivered) == service.refresh_seconds
+        release.set()
+        until(lambda: service.refresh_delay() > 86000)
+        assert bool(service.snapshot()["error"]) is final_poll_fails
+        # The poll can also complete between a callback's snapshot read and
+        # cadence calculation; keep ticking so this browser gets the new result.
+        assert service.refresh_delay(delivered) == service.refresh_seconds
+        assert service.refresh_delay(service.snapshot()) > 86000
+    finally:
+        release.set()
+        service.close()
+
+
+def test_account_read_before_close_is_updated_when_clock_is_read_after_close(tmp_path, monkeypatch):
+    now = datetime(2026, 10, 5, 19, 59, 59, tzinfo=UTC)
+    closing = datetime(2026, 10, 5, 20, tzinfo=UTC)
+
+    class AdvancingDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz)
+
+    monkeypatch.setattr("alpaca_dashboard.service.datetime", AdvancingDatetime)
+    broker = Broker()
+
+    def positions_crossing_close():
+        nonlocal now
+        now = closing + timedelta(seconds=1)
+        return broker.positions
+
+    broker.get_positions = positions_crossing_close
+    broker.get_clock = lambda: {
+        "is_open": False,
+        "timestamp": now.isoformat(),
+        "next_open": "2026-10-06T13:30:00+00:00",
+        "next_close": "2026-10-06T20:00:00+00:00",
+    }
+    service = make_service(tmp_path, broker, refresh_seconds=0.02)
+    service.start()
+    try:
+        until(lambda: service.snapshot()["as_of"] == now.isoformat())
+        until(lambda: service.refresh_delay() > 60000)
+        assert sum(name == "account" for name, _ in broker.calls) == 2
+    finally:
+        service.close()
